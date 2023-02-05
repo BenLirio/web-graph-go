@@ -1,50 +1,52 @@
 package main
 
 import (
+	"./links"
 	"os"
 	"fmt"
-	"golang.org/x/net/html"
-	"./search"
+	"net/http"
+	"sync"
 )
 
-var visited map[string]bool
-var fp *os.File
+type Edge struct {
+	from string
+	to   string
+}
 
+var visited sync.Map
 func main() {
-	var err error
-	visited = make(map[string]bool)
-	fp, err = os.Create("data")
+	i := 0
+	if len(os.Args) < 2 {
+		fmt.Println("Must specify a file to save to")
+	}
+	fp, err := os.Create(os.Args[1])
 	if err != nil {
 		fmt.Println(err)
 		os.Exit(1)
 	}
-	go walkWeb("http://google.com")
-	for {}
+	queue := make(chan Edge)
+	go search("https://google.com", queue)
+	for edge := range queue {
+		i += 1
+		fmt.Println(i)
+		fp.Write([]byte(fmt.Sprintf("%s\t%s\n", edge.from, edge.to)))
+	}
 }
 
-func walkWeb(url string) {
-	fp.Write([]byte(fmt.Sprintf("%s\n", url)))
-	//fmt.Println(url)
-	htmlReader, err := search.GetHTMLReader(url)
+func search(url string, queue chan Edge) {
+	resp, err := http.Get(url)
 	if err != nil {
-		//fmt.Printf("ERROR Getting %s\n", url)
 		return
 	}
-	rootNode, err := html.Parse(htmlReader)
-	if err != nil {
-		//fmt.Printf("ERROR Parsing %s\n", url)
-		return
-	}
-	links, err := search.GetLinks(rootNode)
-	if err != nil {
-		//fmt.Printf("ERROR Finding links in %s\n", url)
-		return
-	}
-	for _, link := range links {
-		go walkWeb(link)
-//		if _, ok := visited[link]; ok != true {
-//			visited[link] = false
-//			go walkWeb(link)
-//		}
+	cLinks := make(chan string)
+	go links.GetLinks(resp.Body, cLinks)
+	for link := range cLinks {
+		if _, ok := visited.Load(link); ok == false {
+			visited.Store(link, true)
+			var edge Edge
+			edge.from = url
+			edge.to = link
+			queue <- edge
+		}
 	}
 }
